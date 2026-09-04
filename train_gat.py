@@ -48,7 +48,7 @@ class GATCommunityClassifier(nn.Module):
         hidden_dim: int = 64,
         heads: int = 4,
         gemini_dim: int = 768,
-        gemini_proj_dim: int = 128,
+        gemini_proj_dim: int = 512,
         num_classes: int = 8,
         dropout: float = 0.25
     ):
