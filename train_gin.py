@@ -166,8 +166,9 @@ def run_gin_cross_validation(
         class_weights = calculate_class_weights(train_labels, num_classes).to(device)
         criterion = nn.CrossEntropyLoss(weight=class_weights)
 
-        # Instantiate GIN Model & Optimizer
-        model = GINCommunityClassifier(num_classes=num_classes).to(device)
+        # Instantiate GIN Model & Optimizer (dynamically adapts to node feature dimension)
+        node_in_dim = dataset[0].x.size(-1)
+        model = GINCommunityClassifier(node_in_dim=node_in_dim, num_classes=num_classes).to(device)
         optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-5)
 

@@ -281,6 +281,7 @@ def get_dataset(
     force_rebuild: bool = False,
     min_samples_per_class: int = 20,
     drop_none: bool = False,
+    sentence_model_name: str = "all-MiniLM-L6-v2",
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
 ) -> Tuple[List[Data], LabelEncoder, np.ndarray]:
     """
@@ -304,7 +305,7 @@ def get_dataset(
         min_samples_per_class=min_samples_per_class,
         drop_none=drop_none
     )
-    dataset = build_pyg_graphs(df, device=device)
+    dataset = build_pyg_graphs(df, sentence_model_name=sentence_model_name, device=device)
 
     # Save cache
     print(f"Caching processed graph dataset to: {cache_path}")
@@ -328,6 +329,7 @@ if __name__ == "__main__":
     parser.add_argument("--force_rebuild", action="store_true", help="Force recomputation of AST and embeddings")
     parser.add_argument("--min_samples", type=int, default=20, help="Minimum samples per pattern class (default: 20 -> 330 data points)")
     parser.add_argument("--drop_none", action="store_true", default=False, help="Whether to drop 'none' pattern (default: False)")
+    parser.add_argument("--model_name", type=str, default="all-MiniLM-L6-v2", help="HuggingFace model for function node embeddings")
     args = parser.parse_args()
 
     dataset, le, classes = get_dataset(
@@ -336,7 +338,8 @@ if __name__ == "__main__":
         embeddings_path=args.embeddings_path,
         force_rebuild=args.force_rebuild,
         min_samples_per_class=args.min_samples,
-        drop_none=args.drop_none
+        drop_none=args.drop_none,
+        sentence_model_name=args.model_name
     )
 
     print("\n--- Dataset Summary ---")

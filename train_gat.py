@@ -136,7 +136,7 @@ def run_gat_cross_validation(
     dataset: List,
     classes: np.ndarray,
     num_classes: int,
-    epochs: int = 40,
+    epochs: int = 35,
     batch_size: int = 16,
     lr: float = 1e-3,
     weight_decay: float = 1e-4,
@@ -171,8 +171,9 @@ def run_gat_cross_validation(
         class_weights = calculate_class_weights(train_labels, num_classes).to(device)
         criterion = nn.CrossEntropyLoss(weight=class_weights)
 
-        # Instantiate Model & Optimizer
-        model = GATCommunityClassifier(num_classes=num_classes).to(device)
+        # Instantiate Model & Optimizer (dynamically adapts to node feature dimension)
+        node_in_dim = dataset[0].x.size(-1)
+        model = GATCommunityClassifier(node_in_dim=node_in_dim, num_classes=num_classes).to(device)
         optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-5)
 
