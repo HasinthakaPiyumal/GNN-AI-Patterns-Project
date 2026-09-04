@@ -28,7 +28,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GATConv, global_mean_pool, global_max_pool
-from torch_geometric.utils import degree
 from torch_geometric.loader import DataLoader
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import classification_report
@@ -46,11 +45,7 @@ from utils import (
 
 class GATCommunityClassifier(nn.Module):
     """
-    Enhanced Multi-Head Graph Attention Network with:
-    - Directed call graph message passing (preserving caller -> callee hierarchy)
-    - On-the-fly topological centrality features (in-degree & out-degree)
-    - Multi-Hop Jumping Knowledge Pooling (retaining both 1-hop calls & 2-hop chains)
-    - Late Fusion with Global Gemini Call-Graph Embeddings
+    Two-layer Multi-Head Graph Attention Network with Late Fusion.
     """
     def __init__(
         self,
@@ -65,12 +60,9 @@ class GATCommunityClassifier(nn.Module):
         super().__init__()
         self.dropout_rate = dropout
 
-        # Degree centrality features (in-degree + out-degree) add 2 scalar dimensions
-        in_dim = node_in_dim + 2
-
-        # GAT Layer 1: [N, in_dim] -> [N, 64 * 4 = 256]
+        # GAT Layer 1: [N, 384] -> [N, 64 * 4 = 256]
         self.gat1 = GATConv(
-            in_channels=in_dim,
+            in_channels=node_in_dim,
             out_channels=hidden_dim,
             heads=heads,
             concat=True,
@@ -88,9 +80,8 @@ class GATCommunityClassifier(nn.Module):
         )
         self.norm2 = nn.LayerNorm(hidden_dim)
 
-        # Multi-Hop Jumping Knowledge Pooling: combines Layer 1 (256-d) + Layer 2 (64-d)
-        # Dual pooling (Mean + Max) on combined 320-d features -> 640-d
-        graph_pooled_dim = (hidden_dim * heads + hidden_dim) * 2
+        # Graph pooling combines Mean + Max pool: 64 + 64 = 128
+        graph_pooled_dim = hidden_dim * 2
 
         # Global Gemini Call-Graph Embedding Projection: [B, 768] -> [B, 128]
         self.gemini_projector = nn.Sequential(
@@ -100,7 +91,7 @@ class GATCommunityClassifier(nn.Module):
             nn.Dropout(dropout)
         )
 
-        # Late Fusion Classifier Head: [B, 640 (Graph) + 128 (Gemini) = 768] -> [B, num_classes]
+        # Late Fusion Classifier Head: [B, 128 (Graph) + 128 (Gemini) = 256] -> [B, num_classes]
         fusion_dim = graph_pooled_dim + gemini_proj_dim
         self.classifier = nn.Sequential(
             nn.Linear(fusion_dim, 128),
@@ -117,35 +108,30 @@ class GATCommunityClassifier(nn.Module):
         batch: torch.Tensor,
         gemini_emb: torch.Tensor
     ) -> torch.Tensor:
-        # On-the-fly topological centrality features (in-degree & out-degree)
-        in_deg = (degree(edge_index[1], num_nodes=x.size(0)) / 10.0).unsqueeze(-1)
-        out_deg = (degree(edge_index[0], num_nodes=x.size(0)) / 10.0).unsqueeze(-1)
-        x_aug = torch.cat([x, in_deg, out_deg], dim=-1)
+        # GAT Layer 1
+        h = self.gat1(x, edge_index)
+        h = self.norm1(h)
+        h = F.elu(h)
+        h = F.dropout(h, p=self.dropout_rate, training=self.training)
 
-        # GAT Layer 1 (1-hop direct call context)
-        h1 = self.gat1(x_aug, edge_index)
-        h1 = self.norm1(h1)
-        h1 = F.elu(h1)
-        h1 = F.dropout(h1, p=self.dropout_rate, training=self.training)
+        # GAT Layer 2
+        h = self.gat2(h, edge_index)
+        h = self.norm2(h)
+        h = F.elu(h)
 
-        # GAT Layer 2 (2-hop call chain context)
-        h2 = self.gat2(h1, edge_index)
-        h2 = self.norm2(h2)
-        h2 = F.elu(h2)
-
-        # Multi-Hop Jumping Knowledge: Concatenate 1-hop direct calls and 2-hop chains
-        h_all = torch.cat([h1, h2], dim=-1)
-        h_mean = global_mean_pool(h_all, batch)
-        h_max = global_max_pool(h_all, batch)
-        h_graph = torch.cat([h_mean, h_max], dim=-1)  # [B, 640]
+        # Dual Global Pooling over nodes in each graph
+        h_mean = global_mean_pool(h, batch)
+        h_max = global_max_pool(h, batch)
+        h_graph = torch.cat([h_mean, h_max], dim=-1)  # [B, 128]
 
         # Project Global Gemini Embedding
+        # Reshape gemini_emb if batching introduces an extra dimension [B, 1, 768] -> [B, 768]
         if gemini_emb.dim() == 3:
             gemini_emb = gemini_emb.squeeze(1)
         h_gemini = self.gemini_projector(gemini_emb)  # [B, 128]
 
-        # Late Fusion: Concatenate multi-hop graph features with global summary features
-        h_fused = torch.cat([h_graph, h_gemini], dim=-1)  # [B, 768]
+        # Late Fusion: Concatenate graph topological features with global summary features
+        h_fused = torch.cat([h_graph, h_gemini], dim=-1)  # [B, 256]
 
         # Classification Logits
         return self.classifier(h_fused)
@@ -255,10 +241,10 @@ def run_gat_cross_validation(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train GAT Classifier for Code Communities.")
     parser.add_argument("--cache_path", type=str, default=DEFAULT_CACHE_PATH, help="Path to cached dataset")
-    parser.add_argument("--epochs", type=int, default=45, help="Number of training epochs per fold")
-    parser.add_argument("--batch_size", type=int, default=8, help="Batch size (8 doubles gradient updates on small datasets)")
-    parser.add_argument("--lr", type=float, default=7e-4, help="Learning rate")
-    parser.add_argument("--weight_decay", type=float, default=2e-4, help="Weight decay")
+    parser.add_argument("--epochs", type=int, default=35, help="Number of training epochs per fold")
+    parser.add_argument("--batch_size", type=int, default=16, help="Batch size")
+    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
+    parser.add_argument("--weight_decay", type=float, default=1e-4, help="Weight decay")
     parser.add_argument("--output_dir", type=str, default="results_gat", help="Directory to save model weights and plots")
     parser.add_argument("--force_rebuild", action="store_true", help="Force rebuild of graph dataset cache")
     parser.add_argument("--min_samples", type=int, default=20, help="Minimum samples per pattern class (default: 20 -> 330 data points)")
