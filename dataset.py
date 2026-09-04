@@ -15,8 +15,12 @@ from __future__ import annotations
 import ast
 import os
 import argparse
+import warnings
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Any
+
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning, module="torch_geometric")
 
 import pandas as pd
 import numpy as np

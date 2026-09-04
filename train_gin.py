@@ -19,7 +19,12 @@ from __future__ import annotations
 
 import argparse
 import os
+import warnings
 from typing import Dict, List, Tuple
+
+# Suppress PyG scatter acceleration warning
+warnings.filterwarnings("ignore", message=".*The usage of scatter.*")
+warnings.filterwarnings("ignore", category=UserWarning, module="torch_geometric")
 
 import numpy as np
 import torch
